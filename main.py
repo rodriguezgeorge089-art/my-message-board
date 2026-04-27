@@ -40,4 +40,4 @@ def main(page: ft.Page):
     )
     load_messages()
 
-ft.app(target=main, view=ft.AppView.FLET_APP)
+ft.app(target=main, view=ft.AppView.WEB_BROWSER, port=int(os.getenv("PORT", 8000)))
