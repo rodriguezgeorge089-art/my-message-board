@@ -1,18 +1,19 @@
-# Use official Python 3.12 image
 FROM python:3.12-slim
 
-# Set the working directory
 WORKDIR /app
 
-# Copy requirements and install dependencies
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy the rest of the app
 COPY . .
 
-# Expose the port Flet will run on (Render sets PORT env variable)
-EXPOSE 8000
-
-# Start the app using flet's built-in webserver
-CMD flet run --web main.py --port $PORT
+# Test environment and imports before trying the real app
+CMD echo "=== Checking Python ===" && \
+    python --version && \
+    echo "=== Checking Env Vars ===" && \
+    echo "SUPABASE_URL=$SUPABASE_URL" && \
+    echo "SUPABASE_KEY=$SUPABASE_KEY" && \
+    echo "=== Testing Supabase import ===" && \
+    python -c "from supabase import create_client; print('Import OK')" && \
+    echo "=== Running the app ===" && \
+    flet run --web main.py --port $PORT 2>&1
