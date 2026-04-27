@@ -1,4 +1,5 @@
-flet
-supabase
 fastapi
 uvicorn
+flet-fastapi
+supabase
+python-dotenv
