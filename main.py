@@ -124,4 +124,4 @@ def main(page: ft.Page):
     page.on_route_change = route_change
     page.go("/login")
 
-ft.app(target=main, view=ft.AppView.WEB_BROWSER, port=int(os.getenv("PORT", 8000)))
+ft.run(target=main, port=int(os.getenv("PORT", 8000)))
