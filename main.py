@@ -1,94 +1,106 @@
-import os
 from fastapi import FastAPI, Request, Form
-from fastapi.responses import RedirectResponse, HTMLResponse
-from fastapi.templating import Jinja2Templates
+from fastapi.responses import HTMLResponse, RedirectResponse
 from starlette.middleware.sessions import SessionMiddleware
-from supabase import create_client, Client
+import os
+from supabase import create_client
+
+app = FastAPI()
+app.add_middleware(SessionMiddleware, secret_key="supersecretkey123")
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-app = FastAPI()
-app.add_middleware(SessionMiddleware, secret_key="change-this-to-a-random-secret")
+LOGIN_HTML = """
+<!DOCTYPE html>
+<html><head><title>Login</title></head><body>
+<h2>Login</h2>
+<form method="post">
+  <input name="email" placeholder="Email" required><br>
+  <input type="password" name="password" placeholder="Password" required><br>
+  <button type="submit">Log In</button>
+</form>
+<p>Don't have an account? <a href="/signup">Sign up</a></p>
+</body></html>
+"""
 
-templates = Jinja2Templates(directory="templates")
+SIGNUP_HTML = """
+<!DOCTYPE html>
+<html><head><title>Sign Up</title></head><body>
+<h2>Create Account</h2>
+<form method="post">
+  <input name="full_name" placeholder="Full Name" required><br>
+  <input name="email" placeholder="Email" required><br>
+  <input type="password" name="password" placeholder="Password" required><br>
+  <select name="role">
+    <option value="buyer">Buyer</option>
+    <option value="seller">Seller</option>
+  </select><br>
+  <button type="submit">Sign Up</button>
+</form>
+</body></html>
+"""
 
-# Helper: get current user from session
-def get_current_user(request: Request):
-    token = request.session.get("access_token")
-    refresh = request.session.get("refresh_token")
-    if not token or not refresh:
-        return None
+DASHBOARD_HTML = """
+<!DOCTYPE html>
+<html><head><title>Dashboard</title></head><body>
+<h2>Welcome, {full_name} ({role})</h2>
+<a href="/logout">Logout</a>
+</body></html>
+"""
+
+@app.get("/login", response_class=HTMLResponse)
+def login_page():
+    return HTMLResponse(LOGIN_HTML)
+
+@app.post("/login")
+def do_login(request: Request, email: str = Form(...), password: str = Form(...)):
     try:
-        supabase.auth.set_session(token, refresh)
-        user = supabase.auth.get_user()
-        return user.user
-    except:
-        return None
+        resp = supabase.auth.sign_in_with_password({"email": email, "password": password})
+        request.session["access_token"] = resp.session.access_token
+        request.session["refresh_token"] = resp.session.refresh_token
+        return RedirectResponse("/dashboard", status_code=303)
+    except Exception:
+        return HTMLResponse(LOGIN_HTML.replace("</body>", "<p style='color:red'>Login failed</p></body>"))
 
-# ----- Sign Up -----
 @app.get("/signup", response_class=HTMLResponse)
-async def signup_page(request: Request):
-    return templates.TemplateResponse("signup.html", {"request": request})
+def signup_page():
+    return HTMLResponse(SIGNUP_HTML)
 
 @app.post("/signup")
-async def do_signup(request: Request, email: str = Form(...), password: str = Form(...),
-                    full_name: str = Form(...), role: str = Form(...)):
+def do_signup(full_name: str = Form(...), email: str = Form(...), password: str = Form(...), role: str = Form(...)):
     try:
         resp = supabase.auth.sign_up({
             "email": email,
             "password": password,
             "options": {"data": {"full_name": full_name}}
         })
-        user = resp.user
-        if user:
-            supabase.table("profiles").update({"role": role}).eq("user_id", user.id).execute()
-            return RedirectResponse(url="/login?message=Account+created", status_code=303)
+        supabase.table("profiles").update({"role": role}).eq("user_id", resp.user.id).execute()
+        return RedirectResponse("/login?message=Account+created", status_code=303)
     except Exception as e:
-        return templates.TemplateResponse("signup.html", {"request": request, "error": str(e)})
+        return HTMLResponse(SIGNUP_HTML.replace("</body>", f"<p style='color:red'>Error: {e}</p></body>"))
 
-# ----- Login -----
-@app.get("/login", response_class=HTMLResponse)
-async def login_page(request: Request, message: str = None):
-    return templates.TemplateResponse("login.html", {"request": request, "message": message})
-
-@app.post("/login")
-async def do_login(request: Request, email: str = Form(...), password: str = Form(...)):
-    try:
-        resp = supabase.auth.sign_in_with_password({"email": email, "password": password})
-        request.session["access_token"] = resp.session.access_token
-        request.session["refresh_token"] = resp.session.refresh_token
-        return RedirectResponse(url="/dashboard", status_code=303)
-    except Exception as e:
-        return templates.TemplateResponse("login.html", {"request": request, "error": str(e)})
-
-# ----- Dashboard -----
 @app.get("/dashboard", response_class=HTMLResponse)
-async def dashboard(request: Request):
-    user = get_current_user(request)
-    if not user:
-        return RedirectResponse(url="/login")
-    profile = supabase.table("profiles").select("*").eq("user_id", user.id).single().execute()
-    if profile.data:
-        user_role = profile.data['role']
-        full_name = profile.data.get('full_name', 'User')
-    else:
-        user_role = "unknown"
-        full_name = "User"
-    return templates.TemplateResponse("dashboard.html", {
-        "request": request,
-        "full_name": full_name,
-        "role": user_role
-    })
+def dashboard(request: Request):
+    token = request.session.get("access_token")
+    if not token:
+        return RedirectResponse("/login")
+    try:
+        supabase.auth.set_session(token, request.session.get("refresh_token"))
+        user = supabase.auth.get_user().user
+        profile = supabase.table("profiles").select("*").eq("user_id", user.id).single().execute()
+        return HTMLResponse(DASHBOARD_HTML.format(
+            full_name=profile.data.get("full_name", "User"),
+            role=profile.data.get("role", "buyer")
+        ))
+    except Exception:
+        return RedirectResponse("/login")
 
-# ----- Logout -----
 @app.get("/logout")
-async def logout(request: Request):
+def logout(request: Request):
     request.session.clear()
-    return RedirectResponse(url="/login")
+    return RedirectResponse("/login")
 
-# ----- Home (redirect to login) -----
 @app.get("/")
-async def root():
-    return RedirectResponse(url="/login")
+def root():
+    return RedirectResponse("/login")
